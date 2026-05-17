@@ -9,31 +9,29 @@
 html,body{width:100%;height:100%;background:#fff;color:#000;font-family:'Courier New',Courier,monospace;overflow:hidden;cursor:none;}
 
 .layout{display:flex;height:100vh;}
-
 .left{width:55%;height:100vh;overflow-y:scroll;scrollbar-width:none;}
 .left::-webkit-scrollbar{display:none;}
 
 .yap-wrap{padding:64px 48px 0 52px;max-width:640px;}
 .yap-wrap p{font-size:13px;line-height:2.4;letter-spacing:0.02em;margin-bottom:1.5em;}
 
-/* each word purely opacity-driven, no transforms */
+/* every word has a base ghost opacity — always readable */
 .word, .trigger {
   display: inline;
-  opacity: 0;
-  /* individual transition set via inline style per word */
+  /* opacity set dynamically via JS */
 }
 
 .trigger {
   text-decoration: underline;
   text-underline-offset: 3px;
   text-decoration-style: dotted;
-  text-decoration-color: rgba(0,0,0,0.28);
+  text-decoration-color: rgba(0,0,0,0.3);
   cursor: none;
 }
 
-.word-popup{position:fixed;z-index:500;pointer-events:none;opacity:0;transition:opacity 0.25s ease;transform:translate(-50%,-110%);}
+.word-popup{position:fixed;z-index:500;pointer-events:none;opacity:0;transition:opacity 0.3s ease;transform:translate(-50%,-110%);}
 .word-popup.show{opacity:1;}
-.word-popup img{width:200px;height:auto;display:block;box-shadow:0 2px 12px rgba(0,0,0,0.15);}
+.word-popup img{width:220px;height:auto;display:block;box-shadow:0 4px 16px rgba(0,0,0,0.12);}
 
 .right{width:45%;height:100vh;position:relative;overflow:hidden;}
 .img-slot{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:52px;opacity:0;transition:opacity 1s ease;pointer-events:none;}
@@ -48,7 +46,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100;height:30px;display:flex;
 .pct{font-size:10px;letter-spacing:0.15em;color:#bbb;}
 
 .mic-dot{position:fixed;bottom:18px;left:18px;width:5px;height:5px;border-radius:50%;background:#ccc;z-index:100;transition:background 0.3s,transform 0.4s;}
-.mic-dot.on{background:#aaa;}
+.mic-dot.on{background:#bbb;}
 .mic-dot.loud{background:#000;transform:scale(2);}
 </style>
 </head>
@@ -80,7 +78,7 @@ const INTERNET_IMG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAY
 const TRIGGERS = { 'internet': INTERNET_IMG };
 const TRIGGER_KEYS = Object.keys(TRIGGERS).map(k => k.toLowerCase());
 
-const sections=[
+const sections = [
   `did online dating apps ruin dating cultures? or were we like that already. movies and romance. fairy tales. how did we end up here. what is love? what's the checkbox if this is love. how do we know if it's love or autism or limerence? why am i obsessed with you help me. i feel disgusting when i like someone.`,
   `guilt of obsession. i am beyond love. the more i study love the more i feel like i am pushing it away. i want to study love to love better. but i fear i am pushing away instead. GOD LOVES ME. Jesus loves me. yes i know. for the bible tells me so. a song my grandma taught me when i was small. an unconditional love.`,
   `my father was an alien. my mother was alien. my blood brothers were alien. i still am an alien. immigration. visa. identity on a card. who am i.`,
@@ -115,212 +113,210 @@ const sections=[
   `recently my headspace has been reflecting on identity culture love and language online and offline. positionality and immigration. the feeling of loneliness has been catching up. the longer i stay here the more i feel i am losing my footing in Singapore and Myanmar. the idea of romantic love has been centring my life again. i have a strong desire to shuffle around loosen the restraints i've given myself and find comfort through learning again. how do i grieve for my culture digitally. identity building in 20__.`,
 ];
 
+// opacity constants
+const OP_GHOST   = 0.22;  // base — always readable, just dim
+const OP_READ    = 0.52;  // "been read" — after full reveal, rests here
+const OP_FULL    = 1.0;   // fully revealed by voice
+const OP_GLITCH  = 0.08;  // flicker low point
+
 // ─── RIGHT PANEL ───
 const right = document.getElementById('right');
 const slots = IMGS.map(src => {
-  const div = document.createElement('div'); div.className='img-slot';
-  const img = document.createElement('img'); img.src=src;
+  const div=document.createElement('div'); div.className='img-slot';
+  const img=document.createElement('img'); img.src=src;
   div.appendChild(img); right.appendChild(div); return div;
 });
 let currentSlot=0; slots[0].classList.add('visible');
 function showSlot(i){const idx=((i%IMGS.length)+IMGS.length)%IMGS.length;if(idx===currentSlot)return;slots[currentSlot].classList.remove('visible');currentSlot=idx;slots[currentSlot].classList.add('visible');}
 
 // ─── BUILD TEXT ───
-// Words assigned a position index per paragraph so we know left/right sides
 const container = document.getElementById('yapContainer');
-const allWordEls = []; // flat list across all copies
+// each word object: { el, orig, clean, isTrig, state: 'ghost'|'read'|'full' }
+const wordData = [];
 
-function buildCopy() {
+function buildCopy(isMaster) {
   const wrap = document.createElement('div');
   wrap.className = 'yap-wrap';
-  sections.forEach(text => {
+  let pIdx = 0;
+  sections.forEach((text, si) => {
     const p = document.createElement('p');
     const words = text.split(/\s+/);
     const total = words.length;
-    words.forEach((w, i) => {
+    words.forEach((w, wi) => {
       const clean = w.replace(/[^a-zA-Z]/g,'').toLowerCase();
       const isTrig = TRIGGER_KEYS.includes(clean);
       const span = document.createElement('span');
       span.className = isTrig ? 'trigger' : 'word';
       span.textContent = w;
       span.dataset.orig = w;
-      span.dataset.clean = clean;
-
-      // position ratio within paragraph: 0=left end, 1=right end
-      const posRatio = i / Math.max(total - 1, 1);
-      span.dataset.pos = posRatio;
-
-      // base opacity-only transition, speed varies by position
-      // left words (posRatio<0.5) and right words (posRatio>=0.5) fade in from their ends
-      const fadeIn  = 0.6 + Math.random() * 0.5;
-      const fadeOut = 2.5 + Math.random() * 1.5;
-      span.dataset.fadeIn  = fadeIn;
-      span.dataset.fadeOut = fadeOut;
-      span.style.transition = `opacity ${fadeOut}s ease`;
-
-      // track which "reveal band" this word belongs to (0..N)
-      // words at edges of each paragraph reveal first, middle last
-      // but across all paragraphs we also sequence by paragraph index
-      span.dataset.revealBand = i; // within-paragraph position
+      // position within paragraph: 0=left edge, 1=right edge
+      span.dataset.posRatio = wi / Math.max(total-1,1);
+      span.dataset.secIdx = si;
+      span.dataset.wordIdx = wi;
+      // start at ghost
+      span.style.opacity = OP_GHOST;
+      span.style.transition = 'opacity 1.2s ease';
 
       if (isTrig) {
         span.addEventListener('mouseenter', () => showPopup(span, clean));
         span.addEventListener('mouseleave', hidePopup);
       }
+
       p.appendChild(span);
-      if (i < total-1) p.appendChild(document.createTextNode(' '));
-      allWordEls.push(span);
+      if (wi < total-1) p.appendChild(document.createTextNode(' '));
+
+      if (isMaster) {
+        wordData.push({ el: span, orig: w, clean, isTrig,
+          state: 'ghost', secIdx: si, posRatio: wi/Math.max(total-1,1) });
+      }
     });
     wrap.appendChild(p);
+    pIdx++;
   });
   const spacer = document.createElement('div'); spacer.style.height='64px';
   wrap.appendChild(spacer); container.appendChild(wrap); return wrap;
 }
 
-const copyA = buildCopy();
-const copyB = buildCopy();
-const copyC = buildCopy();
+const copyA = buildCopy(true);
+const copyB = buildCopy(false);
+const copyC = buildCopy(false);
 
-// group words by paragraph (each section repeated 3 times)
-// For reveal: we treat all words as a flat sequence; the "frontier" expands
-// from both ends of each paragraph inward as talk time grows
-// We build paragraphs array for the reveal logic
-const paragraphs = []; // array of arrays of span elements
-let wi = 0;
-const totalPerCopy = allWordEls.length / 3;
-// just use copyA's spans (first totalPerCopy entries)
-const copyAWords = allWordEls.slice(0, totalPerCopy);
-
-// rebuild paragraph grouping from copyA
-{
-  let pi = 0;
-  copyAWords.forEach(el => {
-    if (!paragraphs[pi]) paragraphs[pi] = [];
-    paragraphs[pi].push(el);
-    if (paragraphs[pi].length >= sections[pi % sections.length].split(/\s+/).length) pi++;
+// mirror copies B and C share structure — we'll sync opacity via section+word index
+// build lookup: secIdx -> wordIdx -> [elB, elC]
+const mirrorEls = {}; // [secIdx][wordIdx] = [elB, elC]
+[copyB, copyC].forEach(copy => {
+  const spans = copy.querySelectorAll('.word, .trigger');
+  spans.forEach(el => {
+    const si = el.dataset.secIdx;
+    const wi = el.dataset.wordIdx;
+    if (!mirrorEls[si]) mirrorEls[si] = {};
+    if (!mirrorEls[si][wi]) mirrorEls[si][wi] = [];
+    mirrorEls[si][wi].push(el);
+    el.style.opacity = OP_GHOST;
+    el.style.transition = 'opacity 1.2s ease';
   });
+});
+
+function setWordOpacity(wd, op, dur) {
+  const t = `opacity ${dur}s ease`;
+  wd.el.style.transition = t;
+  wd.el.style.opacity = op;
+  const mirrors = (mirrorEls[wd.secIdx] || {})[wd.el.dataset.wordIdx] || [];
+  mirrors.forEach(m => { m.style.transition=t; m.style.opacity=op; });
 }
+
+// ─── VIEWPORT AWARENESS ───
+// find which section indices are currently visible in the left panel
+const leftEl = document.getElementById('left');
+
+function getVisibleSections() {
+  const panelRect = leftEl.getBoundingClientRect();
+  const visible = new Set();
+  copyA.querySelectorAll('p').forEach(p => {
+    const r = p.getBoundingClientRect();
+    if (r.bottom > panelRect.top && r.top < panelRect.bottom) {
+      const si = p.querySelector('[data-sec-idx]');
+      if (si) visible.add(parseInt(si.dataset.secIdx));
+    }
+  });
+  return visible;
+}
+
+// ─── SCROLL ───
+const pctEl = document.getElementById('pct');
+let jumping = false;
+
+leftEl.addEventListener('scroll', () => {
+  if (jumping) return;
+  const h = copyA.offsetHeight;
+  if (!h) return;
+  if (leftEl.scrollTop >= h*2) { jumping=true; leftEl.scrollTop-=h; jumping=false; }
+  if (leftEl.scrollTop < h)    { jumping=true; leftEl.scrollTop+=h; jumping=false; }
+  const progress = (leftEl.scrollTop % h) / h;
+  pctEl.textContent = Math.round(progress*100)+'%';
+  showSlot(Math.floor(progress*IMGS.length));
+}, {passive:true});
+
+window.addEventListener('load', () => { leftEl.scrollTop = copyA.offsetHeight; });
 
 // ─── POPUP ───
 const popup=document.getElementById('wordPopup'), popupImg=document.getElementById('popupImg');
 function showPopup(el,key){const src=TRIGGERS[key];if(!src)return;const r=el.getBoundingClientRect();popupImg.src=src;popup.style.left=(r.left+r.width/2)+'px';popup.style.top=r.top+'px';popup.classList.add('show');}
 function hidePopup(){popup.classList.remove('show');}
 
-// ─── SCROLL ───
-const leftEl=document.getElementById('left'), pctEl=document.getElementById('pct');
-let jumping=false;
-leftEl.addEventListener('scroll',()=>{
-  if(jumping)return; const h=copyA.offsetHeight; if(!h)return;
-  if(leftEl.scrollTop>=h*2){jumping=true;leftEl.scrollTop-=h;jumping=false;}
-  if(leftEl.scrollTop<h){jumping=true;leftEl.scrollTop+=h;jumping=false;}
-  const p=(leftEl.scrollTop%h)/h; pctEl.textContent=Math.round(p*100)+'%'; showSlot(Math.floor(p*IMGS.length));
-},{passive:true});
-window.addEventListener('load',()=>{leftEl.scrollTop=copyA.offsetHeight;});
-
 // ─── MIC + REVEAL ENGINE ───
-const micDot=document.getElementById('micDot');
-const glyphs='abcdefghijklmnopqrstuvwxyz·_-.·';
-function corrupt(s){return s.split('').map(c=>Math.random()<0.55?glyphs[Math.floor(Math.random()*glyphs.length)]:c).join('');}
+const micDot = document.getElementById('micDot');
+const glyphs = 'abcdefghijklmnopqrstuvwxyz·_-.';
+function corrupt(s){return s.split('').map(c=>Math.random()<0.5?glyphs[Math.floor(Math.random()*glyphs.length)]:c).join('');}
 
-let smoothed=0;
-const THRESHOLD=0.20;
-const WORDS_PER_TICK=3;        // how many new words unlock per talk-tick
-const TICK_INTERVAL=180;       // ms between reveal ticks while talking
-const FADE_OUT_DELAY=2200;     // ms of silence before starting fade
-const GLITCH_RATE=0.055;       // probability per word per tick of glitch while revealed
+let smoothed = 0;
+const THRESHOLD   = 0.20;
+const WORDS_PER_TICK = 4;   // words revealed per 200ms tick while talking
+const GLITCH_RATE = 0.06;   // per visible word per tick
 
-// per-word state across ALL three copies
-// we track revealed state on the element directly via opacity
-let revealFrontier = 0;        // index into flat word list (copyA only, mirrors to B+C)
-let silenceTimer = null;
-let revealInterval = null;
-let isTalking = false;
+// per-section reveal progress: secIdx -> number of words revealed so far
+const sectionReveal = {};
 
-// set opacity on a word + its mirrors in copies B and C
-function setOpacity(idx, val, transTime) {
-  const els = [
-    allWordEls[idx],
-    allWordEls[idx + totalPerCopy],
-    allWordEls[idx + totalPerCopy * 2]
-  ];
-  els.forEach(el => {
-    if (!el) return;
-    el.style.transition = `opacity ${transTime}s ease`;
-    el.style.opacity = val;
-  });
-}
-
-// Build reveal order: for each paragraph, words at edges first, creeping inward
-// So paragraph words ordered: 0, last, 1, last-1, 2, last-2 ...
-function buildRevealOrder() {
+// build reveal order per section: edges inward
+function buildSectionOrder(si) {
+  const words = wordData.filter(w => w.secIdx === si);
+  const total = words.length;
   const order = [];
-  // flatten copyA paragraphs in edge-first order
-  paragraphs.forEach(pg => {
-    const left = [];
-    const right = [];
-    pg.forEach((el, i) => { (i % 2 === 0 ? left : right).push(i); });
-    // interleave: take from left end and right end alternately
-    let lo=0, ro=pg.length-1;
-    while (lo <= ro) {
-      if (lo === ro) { order.push(allWordEls.indexOf(pg[lo])); lo++; }
-      else { order.push(allWordEls.indexOf(pg[lo])); order.push(allWordEls.indexOf(pg[ro])); lo++; ro--; }
-    }
-  });
+  let lo=0, hi=total-1;
+  while (lo <= hi) {
+    if (lo===hi) { order.push(words[lo]); lo++; }
+    else { order.push(words[lo]); order.push(words[hi]); lo++; hi--; }
+  }
   return order;
 }
 
-const revealOrder = buildRevealOrder();
-let revealProgress = 0; // how many words in revealOrder have been shown
+const sectionOrders = {};
+sections.forEach((_, si) => { sectionOrders[si] = buildSectionOrder(si); sectionReveal[si] = 0; });
 
-function revealNextBatch() {
-  const end = Math.min(revealProgress + WORDS_PER_TICK, revealOrder.length);
-  for (let i = revealProgress; i < end; i++) {
-    const idx = revealOrder[i];
-    setOpacity(idx, 1, parseFloat(allWordEls[idx].dataset.fadeIn) || 0.8);
-  }
-  revealProgress = end;
-}
+let isTalking = false;
+let silenceTimer = null;
 
-function startRevealing() {
-  if (revealInterval) return;
-  revealInterval = setInterval(() => {
-    if (revealProgress < revealOrder.length) revealNextBatch();
-  }, TICK_INTERVAL);
-}
-
-function stopRevealing() {
-  clearInterval(revealInterval);
-  revealInterval = null;
-}
-
-function startFadeOut() {
-  // slowly fade all revealed words out
-  for (let i = 0; i < revealProgress; i++) {
-    const idx = revealOrder[i];
-    const dur = 3.5 + Math.random() * 2.5;
-    setOpacity(idx, 0, dur);
-  }
-  // reset frontier after fade completes
-  setTimeout(() => { revealProgress = 0; }, 6000);
-}
-
-// glitch tick — runs always, affects only currently visible words
-setInterval(() => {
-  for (let i = 0; i < revealProgress; i++) {
-    const idx = revealOrder[i];
-    const el = allWordEls[idx];
-    const elB = allWordEls[idx + totalPerCopy];
-    const elC = allWordEls[idx + totalPerCopy * 2];
-    if (!el) continue;
-    const vis = parseFloat(el.style.opacity) > 0.05;
-    if (!vis) continue;
-    if (Math.random() < GLITCH_RATE) {
-      const corrupted = corrupt(el.dataset.orig);
-      const restoreDelay = 80 + Math.random() * 220;
-      [el, elB, elC].forEach(e => { if(e){ e.textContent = corrupted; setTimeout(()=>{ e.textContent=e.dataset.orig; }, restoreDelay); } });
+function revealTick() {
+  const visSections = getVisibleSections();
+  visSections.forEach(si => {
+    const order = sectionOrders[si];
+    const current = sectionReveal[si];
+    const end = Math.min(current + WORDS_PER_TICK, order.length);
+    for (let i = current; i < end; i++) {
+      const wd = order[i];
+      if (wd.state !== 'full') {
+        wd.state = 'full';
+        setWordOpacity(wd, OP_FULL, 0.7 + Math.random()*0.6);
+      }
     }
-  }
-}, 130);
+    sectionReveal[si] = end;
+  });
+}
+
+function goSilent() {
+  isTalking = false;
+  silenceTimer = null;
+  micDot.classList.remove('loud');
+  // sections that are fully revealed → drop to READ state
+  // sections in viewport that are partially revealed → drop to ghost
+  Object.keys(sectionReveal).forEach(si => {
+    const order = sectionOrders[si];
+    const revealed = sectionReveal[si];
+    const isFullyRevealed = revealed >= order.length;
+    order.forEach((wd, i) => {
+      if (i < revealed) {
+        const targetOp = isFullyRevealed ? OP_READ : OP_GHOST;
+        if (wd.state !== 'read' || !isFullyRevealed) {
+          wd.state = isFullyRevealed ? 'read' : 'ghost';
+          const dur = 2.5 + Math.random()*2;
+          setWordOpacity(wd, targetOp, dur);
+        }
+      }
+    });
+  });
+}
+
+let revealTicker = null;
 
 async function initMic() {
   try {
@@ -331,45 +327,67 @@ async function initMic() {
     const data = new Uint8Array(analyser.frequencyBinCount);
     micDot.classList.add('on');
 
-    (function loop() {
+    (function loop(){
       analyser.getByteFrequencyData(data);
       const raw = data.reduce((a,b)=>a+b,0)/data.length/60;
-      smoothed = smoothed*0.85 + raw*0.15;
+      smoothed = smoothed*0.84 + raw*0.16;
 
       if (smoothed > THRESHOLD) {
         micDot.classList.add('loud');
+        clearTimeout(silenceTimer);
         if (!isTalking) {
           isTalking = true;
-          clearTimeout(silenceTimer);
-          startRevealing();
-        } else {
-          clearTimeout(silenceTimer);
-          silenceTimer = setTimeout(goSilent, FADE_OUT_DELAY);
+          revealTicker = setInterval(revealTick, 200);
         }
+        silenceTimer = setTimeout(()=>{ clearInterval(revealTicker); goSilent(); }, 1800);
       } else {
         micDot.classList.remove('loud');
-        if (isTalking && !silenceTimer) {
-          silenceTimer = setTimeout(goSilent, FADE_OUT_DELAY);
-        }
       }
       requestAnimationFrame(loop);
     })();
   } catch {
-    // no mic fallback: reveal everything slowly
-    startRevealing();
+    // no mic: all words visible at full opacity
+    wordData.forEach(wd => { wd.state='full'; setWordOpacity(wd, OP_FULL, 0.5); });
   }
-}
-
-function goSilent() {
-  isTalking = false;
-  silenceTimer = null;
-  stopRevealing();
-  startFadeOut();
 }
 
 initMic();
 
-// ─── SCROLL / INFINITE LOOP ───
+// ─── AMBIENT GLITCH — always running on visible words ───
+// ghost words: low flicker. full/read words: slightly more.
+setInterval(() => {
+  const visSections = getVisibleSections();
+  wordData.forEach(wd => {
+    const inView = visSections.has(wd.secIdx);
+    const rate = inView
+      ? (wd.state === 'full' ? GLITCH_RATE : 0.02)
+      : 0.008;
+    if (Math.random() < rate) {
+      const dur = 80 + Math.random()*250;
+      const curOp = parseFloat(wd.el.style.opacity);
+      // flicker down then restore
+      const flickOp = wd.state==='full' ? OP_GLITCH : Math.max(curOp*0.3, 0.02);
+      setWordOpacity(wd, flickOp, 0.08);
+      setTimeout(() => {
+        const restore = wd.state==='full' ? OP_FULL : wd.state==='read' ? OP_READ : OP_GHOST;
+        setWordOpacity(wd, restore, 0.3);
+        wd.el.textContent = wd.orig;
+        (mirrorEls[wd.secIdx]||{})[wd.el.dataset.wordIdx]?.forEach(m=>m.textContent=wd.orig);
+      }, dur);
+      // also corrupt letters sometimes
+      if (Math.random() < 0.55) {
+        const corrupted = corrupt(wd.orig);
+        wd.el.textContent = corrupted;
+        (mirrorEls[wd.secIdx]||{})[wd.el.dataset.wordIdx]?.forEach(m=>m.textContent=corrupted);
+        setTimeout(()=>{
+          wd.el.textContent=wd.orig;
+          (mirrorEls[wd.secIdx]||{})[wd.el.dataset.wordIdx]?.forEach(m=>m.textContent=wd.orig);
+        }, dur);
+      }
+    }
+  });
+}, 140);
+
 // ─── CURSOR TRAIL ───
 const dotEl=document.getElementById('dot');
 const POOL=22; const pool=[]; let pidx=0,lx=0,ly=0;
