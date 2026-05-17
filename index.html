@@ -244,7 +244,7 @@ function renderFrame(){
     if(targetOp>wordOpacity[idx]){
       dur=Math.max(0.04, 0.65-(vol-NOISE_FLOOR)*1.8);
     } else {
-      dur=0.25+wd.posInLine*0.2; // centre words linger slightly longer on way out
+      dur=0.8+wd.posInLine*0.5; // echo fade — centre words trail longer
     }
 
     wordOpacity[idx]=targetOp;
@@ -285,7 +285,7 @@ async function initMic(){
       if(rawVol>vol){
         vol=vol*0.55+rawVol*0.45; // fast attack
       } else {
-        vol=vol*0.88+rawVol*0.12; // slow release
+        vol=vol*0.96+rawVol*0.04; // echo release
       }
       vol=Math.min(vol,1);
 
