@@ -49,7 +49,7 @@ const INTERNET_IMG="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEB
 const TRIGGERS={'internet':INTERNET_IMG};
 const TRIGGER_KEYS=Object.keys(TRIGGERS).map(k=>k.toLowerCase());
 
-const OP_GHOST=0.12;
+const OP_GHOST=0.03;
 const OP_READ=0.50;
 const OP_FULL=1.0;
 
@@ -119,7 +119,7 @@ function buildCopy(master) {
       span.dataset.wi=wi;
       // start at ghost
       span.style.opacity=OP_GHOST;
-      span.style.transition='opacity 0.8s ease';
+      span.style.transition='opacity 0.12s ease';
       if(master){
         wordMeta.push({orig:w,clean,isTrig,secIdx:si,posRatio:wi/Math.max(words.length-1,1),state:'ghost'});
         if(isTrig){
@@ -230,7 +230,8 @@ function revealTick(){
     for(let i=cur;i<end;i++){
       const idx=order[i];
       wordMeta[idx].state='full';
-      setOp(idx,OP_FULL,0.5+Math.random()*0.4);
+      const spd=Math.max(0.08, 0.8-(smoothed-THRESHOLD)*4);
+      setOp(idx,OP_FULL,spd);
     }
     sectionProgress[si]=end;
   });
@@ -249,7 +250,7 @@ function goSilent(){
       if(i<sectionProgress[si]){
         const target=done?OP_READ:OP_GHOST;
         wordMeta[idx].state=done?'read':'ghost';
-        setOp(idx,target,2.5+Math.random()*2);
+        setOp(idx,target,1.2+Math.random()*0.6);
       }
     });
   });
@@ -296,12 +297,12 @@ setInterval(()=>{
     if(Math.random()<rate){
       const dur=70+Math.random()*230;
       const flickOp=wd.state==='full'?0.05:Math.max(OP_GHOST*0.3,0.02);
-      setOp(idx,flickOp,0.06);
+      setOp(idx,flickOp,0.05);
       const corrupted=Math.random()<0.6?corrupt(wd.orig):wd.orig;
       copySpans.forEach(s=>{if(s[idx])s[idx].textContent=corrupted;});
       setTimeout(()=>{
         const restore=wd.state==='full'?OP_FULL:wd.state==='read'?OP_READ:OP_GHOST;
-        setOp(idx,restore,0.3);
+        setOp(idx,restore,0.15);
         copySpans.forEach(s=>{if(s[idx])s[idx].textContent=wd.orig;});
       },dur);
     }
