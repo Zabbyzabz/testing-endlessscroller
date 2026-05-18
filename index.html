@@ -231,7 +231,7 @@ function corrupt(s){return s.split('').map(c=>Math.random()<0.5?glyphs[~~(Math.r
 let vol=0;        // smoothed volume 0-1
 let rawVol=0;     // fast unsmoothed for snap response
 
-const NOISE_FLOOR=0.10;  // below this = silence
+const NOISE_FLOOR=0.15;  // below this = silence
 
 // ─── MAIN RENDER LOOP ───
 // Runs every animation frame, directly maps volume → opacity per word
